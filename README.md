@@ -130,12 +130,17 @@ and exits with code 2. Use any Windows PC or Linux machine, a Raspberry Pi is en
 ## Getting the official firmware package
 
 Download `FM-1.fwsc` from [M-VAVE's download page](https://www.m-vave.com/download).
-The wizard accepts hash-verified official **V15 or V16**. V16 (released 2026-10-21)
-has identity `FM-1_016`, firmware-region sha256
-`980ff51ae2d90004cf3887602ebd11cd31796977410eb77cc7faabad4023003c`, and file sha256
-`d017fb65e70aca97ee29d944470c3515a74581df5c0576bf70de917c7b2b61d5`.
-Use `wizard --firmware FM-1.fwsc`; `--v15` remains a compatible alias for the wizard.
-The separate `--verify-v15` flag still requires V15 and must not be used with V16.
+Use hash-verified official **V15** for recovery. **V16 is not supported**:
+its flash image is `0xA9000` bytes and its boot head differs from V15's.
+This tool and the bundled Transporter only write `0x4000..0x92FFF`.
+Earlier V16 support incorrectly truncated the image, leaving 22 sectors unwritten,
+then reported success after verifying that partial image. The tool now refuses
+incompatible image sizes before connecting or writing, including with `--i-know`.
+V16 can still be identified and inspected offline.
+
+If a V16 recovery verified but the unit stayed dark, recover again with verified V15
+and a fresh backup. Do not increase the write limit or replace the boot head.
+Use `wizard --firmware FM-1-V15.fwsc`; `--v15` remains a compatible alias.
 
 For historical V15 packages, the tool checks identity `FM-1_015`, firmware-region sha256
 `6edf3c37fb5bbbc33607c89375ee024d5477c17914d72221c8c68e58a8255686` (file sha256

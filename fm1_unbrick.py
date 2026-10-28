@@ -388,6 +388,17 @@ class Package:
                             "genuine FM-1.fwsc (sha256 %s); informational only", V15_FILE_SHA256)
         log.debug("  package head sha256 %s", self.head_sha256)
 
+    def check_layout(self):
+        """Never silently truncate a flash image to the V15 recovery layout."""
+        if self.fl_len != FW_END:
+            raise SafetyError(
+                "%s has a flash image of 0x%X bytes; this recovery tool requires "
+                "exactly 0x%X and only writes 0x%X..0x%X. Refusing a partial restore. "
+                "Official V16 uses a larger image and a different boot head; recover "
+                "with verified official V15 instead. Do not extend the write range "
+                "or overwrite the boot head."
+                % (self.path.name, self.fl_len, FW_END, FW_START, FW_END - 1))
+
     def check_writable(self, i_know=False):
         """Refuse packages that must not be written."""
         if self.firmware.count(0xFF) == len(self.firmware) or not any(self.firmware):
@@ -399,6 +410,7 @@ class Package:
                 "%s says it is official %s but its firmware hash is %s, not %s. "
                 "Download FM-1.fwsc again from M-VAVE; refusing to write it."
                 % (self.path.name, version, self.firmware_sha256, expected))
+        self.check_layout()
         if self.kind == "unknown":
             if not i_know:
                 raise SafetyError("%s has no recognisable FM-1 identity (%r); refusing "
@@ -1308,6 +1320,7 @@ def cmd_backup(args, device=None):
 def cmd_extract(args):
     pkg = Package.load(args.package)
     pkg.log_summary()
+    pkg.check_layout()
     if args.verify_v15 and pkg.kind != "official-v15":
         log.error("NOT the official V15 firmware: expected sha256 %s. Stop here.",
                   V15_FLASH_FW_SHA256)

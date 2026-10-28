@@ -15,7 +15,7 @@ dump showed, and `fm1_transporter_recover.py`, which automates it.
 ## The short version (no toolchain, no expert needed)
 
 1. Buy the two parts below; charge the FM-1 fully.
-2. Download `FM-1.fwsc` (the official V16, or the previously verified V15) from <https://www.m-vave.com/download> and put it in
+2. Obtain `FM-1.fwsc` (the verified official **V15**, not V16) from <https://www.m-vave.com/download> or an archived copy and put it in
    this folder. The script finds it by its hash, so you never type its path.
 3. In this folder:
    ```sh
@@ -37,11 +37,13 @@ dump showed, and `fm1_transporter_recover.py`, which automates it.
 4. When it says done: switch the FM-1 off, remove the three wires, switch it on. It boots the stock
    firmware you selected. Install whatever firmware you want the normal way, on a full battery.
 
-The wizard verifies the V15 or V16 firmware hash before connecting to the FM-1.
-`--v15` remains an alias for `--firmware` in the wizard. In the manual commands
-below, `--verify-v15` specifically requires V15: omit it when restoring V16,
-and supply the V16 package path explicitly. `--v15` on analysis commands still
-means a V15 reference, so omit that reference when you only have V16.
+The wizard verifies the firmware hash and image size before connecting to the FM-1.
+**V16 is not supported:** its image reaches `0xA8FFF`, beyond the Transporter's
+`0x92FFF` write limit, and its boot head differs from V15's. Earlier versions silently
+omitted 22 sectors and could report a verified write while leaving the unit unable
+to boot. If that happened, recover with verified V15 and a fresh backup. Do not
+extend the write range or overwrite the boot head.
+`--v15` remains an alias for `--firmware` in the wizard.
 
 No part of this needs a compiler: the Transporter firmware ships prebuilt in `transporter/`
 with a placeholder where JieLi's loader goes, and `setup` splices the loader in from

@@ -695,27 +695,46 @@ def wait_status(t: Transporter, wait: float) -> dict:
 
 
 def ensure_uboot(t: Transporter, st: dict, timeout=20.0) -> dict:
-    """UBOOT is required for info/read/wsec; on stock V15 use the soft key."""
-    if st.get("uboot") == "1":
-        return st
-    if st.get("v15") != "1":
-        if _drain is not None and _drain.released:
-            raise fu.UnbrickError(DROPPED_UBOOT)
-        raise fu.UnbrickError("the Transporter reports no UBOOT and no stock V15. Power-cycle "
-                              "the FM-1; if it has no working firmware run `rekey`, then switch "
-                              "the FM-1 off and on.")
-    reply = t.request("uboot")
-    log.info("Soft key: %s", reply)
-    if not reply.startswith("OK"):
-        raise TransporterError("uboot: %s" % reply)
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        time.sleep(0.5)
-        st = t.status()
+    """Wait for enumeration after ACK; on stock V15 send the soft key once.
+
+    The first status reply can arrive before the six-second calibration and
+    USB enumeration finish. A replied uboot=0/v15=0 is transient, not failure.
+    Poll only after each reply so there is never more than one pending request.
+    """
+    deadline = time.monotonic() + max(timeout, 0)
+    soft_key_sent = False
+    waiting_logged = False
+    while True:
         if st.get("uboot") == "1":
             log.info("FM-1 is in UBOOT")
             return st
-    raise fu.UnbrickError("soft key sent but no UBOOT appeared")
+        if st.get("v15") != "1" and _drain is not None and _drain.released:
+            raise fu.UnbrickError(DROPPED_UBOOT)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if st.get("v15") == "1" and not soft_key_sent:
+            reply = t.request("uboot", timeout=remaining)
+            log.info("Soft key: %s", reply)
+            if not reply.startswith("OK"):
+                raise TransporterError("uboot: %s" % reply)
+            soft_key_sent = True
+        elif not waiting_logged:
+            log.info("Waiting for UBOOT enumeration; keep the FM-1 on and connected ...")
+            waiting_logged = True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.5, remaining))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        st = t.status(timeout=remaining)
+    if soft_key_sent:
+        raise fu.UnbrickError("soft key sent but no UBOOT appeared after %g s" % timeout)
+    raise fu.UnbrickError("no UBOOT appeared after %g s of waiting for enumeration. "
+                          "Switch the FM-1 off, run `rekey`, then switch it on again."
+                          % timeout)
 
 
 def check_info(t: Transporter) -> str:
@@ -1180,6 +1199,7 @@ DANGER_TEXT = """
 class Plan:
     def __init__(self, pkg, ref, ref_path):
         self.pkg, self.ref, self.ref_path = pkg, ref, ref_path
+        pkg.check_layout()
         self.img = package_region(pkg)
         if len(ref) != FLASH_SIZE:
             raise fu.UnbrickError("--ref must be a full 0x%X-byte dump (%s is 0x%X)"
@@ -1197,9 +1217,6 @@ class Plan:
                  APP_END - 1, fu.sha256(self.img)[:16], len(self.diff),
                  "" if len(self.diff) == 1 else "s",
                  ": " + hexlist(self.diff) if self.diff else "")
-        if pkg.fl_len > APP_END:
-            log.info("  (the package's flash image continues past 0x%X; that part is ignored)",
-                     APP_END - 1)
         if self.head_diff:
             log.warning("NOTE: the package's head differs from the device's in sectors %s. The "
                         "head 0x0000..0x3FFF is NEVER written; only the application sectors are.",
@@ -1806,7 +1823,8 @@ DUMP_ADVICE = """\
 FINAL_TEXT = """\
   1. Switch the FM-1 OFF.
   2. Remove the three wires (and the pigtail) from the FM-1.
-  3. Switch the FM-1 ON: it boots stock V15.
+  3. Switch the FM-1 ON and check that stock V15 boots. Read-back verification
+     confirms the flash contents; it does not confirm a successful boot.
   4. Plug it into the computer normally and install whatever firmware you
      want, on a full battery, with the computer awake (no sleep) until the
      installer says it is done."""
@@ -1907,10 +1925,10 @@ class Wizard:
     # steps --------------------------------------------------------------------
 
     def get_v15(self):
-        path = self.args.v15 or find_v15(kinds=("official-v15", "official-v16"))
+        path = self.args.v15 or find_v15()
         while True:
             if not path:
-                self.say("  The wizard needs hash-verified official V15 or V16 firmware, FM-1.fwsc.\n"
+                self.say("  The wizard needs hash-verified official V15 firmware, FM-1.fwsc.\n"
                          "  Download it from %s (M-VAVE does not allow it to be\n"
                          "  shared, so it is not included here)." % V15_URL)
                 answer = self.ask("Path to FM-1.fwsc (you can drag the file into this window), "
@@ -1944,7 +1962,7 @@ class Wizard:
         a = self.args
         self.step(0, "checks", "  Checking that setup was run, that the Transporter firmware file "
                                "is intact,\n  that pyserial is installed, and that you have the "
-                               "verified official V15 or V16 file.")
+                               "verified official V15 file with a supported flash layout.")
         uf2 = Path(a.uf2)
         if not uf2.is_file():
             msg = ("the Transporter firmware %s is missing. Run `python3 fm1_transporter_recover.py "
@@ -2170,7 +2188,7 @@ def build_parser():
                    help="only verify the four sha256s (placeholder, pattern, loader, result)")
     p = sp("wizard", "the whole recovery, step by step (run `setup` first)")
     p.add_argument("--firmware", "--v15", dest="v15", metavar="FILE",
-                   help="verified official FM-1.fwsc (V15 or V16); asked for if missing")
+                   help="verified official V15 FM-1.fwsc (V16 layout is unsupported); asked for if missing")
     p.add_argument("--out", default="backups", help="dump folder (default: ./backups)")
     p.add_argument("--uf2", default=str(DEFAULT_UF2),
                    help="the Transporter firmware (default: %(default)s)")

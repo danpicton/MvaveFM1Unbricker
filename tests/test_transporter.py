@@ -105,6 +105,59 @@ class Base(Workdir):
 # mock protocol
 # --------------------------------------------------------------------------
 
+class UbootReadinessTests(unittest.TestCase):
+
+    def setUp(self):
+        self.now = 0.0
+        self.t = mock.Mock(spec=tr.Transporter)
+        self.pending = {"uboot": "0", "v15": "0"}
+        self.stock = {"uboot": "0", "v15": "1"}
+        self.ready = {"uboot": "1", "v15": "0"}
+        patches = [mock.patch.object(tr.time, "monotonic", side_effect=lambda: self.now),
+                   mock.patch.object(tr.time, "sleep", side_effect=self.advance),
+                   mock.patch.object(tr, "_drain", None)]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def advance(self, seconds):
+        self.now += seconds
+
+    def test_initial_zero_status_waits_for_late_uboot(self):
+        # Hardware log: zero status at 08:00:07, UBOOT READY at 08:00:09.
+        self.t.status.side_effect = [self.pending] * 3 + [self.ready]
+        self.assertEqual(tr.ensure_uboot(self.t, self.pending), self.ready)
+        self.assertEqual(self.now, 2)
+        self.t.request.assert_not_called()  # no rekey or soft key during enumeration
+
+    def test_already_ready_does_not_poll(self):
+        self.assertEqual(tr.ensure_uboot(self.t, self.ready), self.ready)
+        self.t.status.assert_not_called()
+        self.t.request.assert_not_called()
+
+    def test_persistent_zero_status_times_out(self):
+        self.t.status.return_value = self.pending
+        with self.assertRaisesRegex(fu.UnbrickError, "after 2 s.*enumeration"):
+            tr.ensure_uboot(self.t, self.pending, timeout=2)
+        self.assertEqual(self.now, 2)
+        self.t.request.assert_not_called()
+        for call in self.t.status.call_args_list:
+            self.assertGreater(call.kwargs["timeout"], 0)
+            self.assertLessEqual(call.kwargs["timeout"], 2)
+
+    def test_stock_appearing_later_gets_one_soft_key(self):
+        self.t.status.side_effect = [self.stock, self.stock, self.pending, self.ready]
+        self.t.request.return_value = "OK"
+        self.assertEqual(tr.ensure_uboot(self.t, self.pending), self.ready)
+        self.t.request.assert_called_once_with("uboot", timeout=19.5)
+
+    def test_failed_soft_key_is_reported(self):
+        self.t.request.return_value = "ERR failed"
+        with self.assertRaisesRegex(tr.TransporterError, "uboot: ERR failed"):
+            tr.ensure_uboot(self.t, self.stock)
+        self.t.status.assert_not_called()
+
+
 class MockProtocolTests(Base):
 
     def test_line_protocol(self):
@@ -690,7 +743,7 @@ class WizardTests(NoV15Search, Base):
         self.assertIn("D6 (GP0)      green          D+", text)
         self.assertIn("In short (the backup is", text)
         self.assertIn("Final full read EQUALS", text)
-        self.assertIn("it boots stock V15", text)
+        self.assertIn("check that stock V15 boots", text)
         self.assertEqual(len(list(Path("bk").glob("*.bin"))), 1)
 
     def test_wizard_wrong_confirmation_writes_nothing(self):
@@ -704,17 +757,20 @@ class WizardTests(NoV15Search, Base):
         self.assertNotIn("Step 6 of 6", text)
         self.assertNotIn("Traceback", text)
 
-    def test_wizard_verified_v16_end_to_end(self):
-        path, image = self.pkg("v16.fwsc", 16, identity="FM-1_016")
+    def test_wizard_rejects_verified_v16_larger_layout_before_connecting(self):
+        path = Path("v16.fwsc")
+        path.write_bytes(make_fwsc("FM-1_016", make_ufw(random_image(16, 0xA9000))))
         digest = fu.Package.load(path).firmware_sha256
         t, m = self.transporter(flash=self.before)
         with mock.patch.object(fu, "V16_FLASH_FW_SHA256", digest):
-            rc, s = self.wizard(t, ["", "", "WRITE"], "--firmware", str(path))
-        self.assertEqual(rc, 0)
-        self.assertEqual(s.answers, [])
-        expected = self.before[:0x4000] + image[0x4000:0x93000] + self.before[0x93000:]
-        self.assertEqual(bytes(m.flash), expected)
-        self.assertIn("it boots stock V16", self.out.getvalue())
+            rc, s = self.wizard(t, [], "--firmware", str(path))
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(m.reads, 0)
+        self.assertEqual(m.writes, [])
+        self.assertEqual(bytes(m.flash), self.before)
+        self.assertIn("Refusing a partial restore", self.out.getvalue())
+        with self.assertRaisesRegex(fu.SafetyError, "Refusing a partial restore"):
+            tr.Plan(fu.Package.load(path), self.before, "backup.bin")
 
     def test_wizard_rejects_unverified_v16_before_connecting(self):
         path, _ = self.pkg("v16.fwsc", 16, identity="FM-1_016")

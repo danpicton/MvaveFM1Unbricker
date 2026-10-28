@@ -85,7 +85,7 @@ def make_ufw(flash: bytes, ota: bytes = b"OTA" * 100) -> bytes:
     return bytes(logical)
 
 
-def random_image(seed, length=0x94000):
+def random_image(seed, length=0x93000):
     rnd = random.Random(seed)
     return rnd.randbytes(length)
 
@@ -176,6 +176,24 @@ class FwscTests(unittest.TestCase):
         pkg = fu.Package("v16.fwsc", make_fwsc("FM-1_016", make_ufw(random_image(16))))
         with self.assertRaisesRegex(fu.SafetyError, "official V16"):
             pkg.check_writable(False)
+
+    def test_verified_v16_larger_layout_cannot_be_written_or_extracted(self):
+        flash = random_image(16, 0xA9000)
+        pkg = fu.Package("v16.fwsc", make_fwsc("FM-1_016", make_ufw(flash)))
+        with mock.patch.object(fu, "V16_FLASH_FW_SHA256", pkg.firmware_sha256):
+            pkg = fu.Package(pkg.path, make_fwsc("FM-1_016", make_ufw(flash)))
+        self.assertEqual(pkg.kind, "official-v16")
+        for override in (False, True):
+            with self.assertRaisesRegex(fu.SafetyError, "Refusing a partial restore"):
+                pkg.check_writable(override)
+        with mock.patch.object(fu.Package, "load", return_value=pkg):
+            with self.assertRaisesRegex(fu.SafetyError, "Refusing a partial restore"):
+                fu.cmd_extract(types.SimpleNamespace(package=pkg.path))
+
+    def test_oversized_third_party_layout_cannot_be_written(self):
+        pkg = fu.Package("large.fwsc", make_fwsc("FM-1_920", make_ufw(random_image(1, 0x94000))))
+        with self.assertRaisesRegex(fu.SafetyError, "Refusing a partial restore"):
+            pkg.check_writable(True)
 
     @unittest.skipUnless(ORACLE_FWSC.is_file(), "oracle package not available")
     def test_real_package_layout(self):
