@@ -28,7 +28,7 @@ Safety rules, enforced in code:
 
 For a first-time user: `setup` (fetches JieLi's loader, builds the Transporter
 firmware from the prebuilt placeholder in transporter/, installs pyserial), then
-`wizard --v15 FM-1.fwsc` (every step, with prompts).
+`wizard --firmware FM-1.fwsc` (every step, with prompts).
 
 Run `python fm1_transporter_recover.py --help` and see README.md.
 """
@@ -752,8 +752,8 @@ def v15_search_dirs():
     return [Path.cwd(), SCRIPT_DIR]
 
 
-def find_v15():
-    """The single hash-verified official V15 *.fwsc in the cwd or the script's
+def find_v15(kinds=("official-v15",)):
+    """The single hash-verified matching *.fwsc in the cwd or the script's
     folder, or None (none found, or several different ones)."""
     found, seen = [], set()
     for d in v15_search_dirs():
@@ -767,13 +767,13 @@ def find_v15():
             except Exception as e:
                 log.debug("%s: %s", path, e)
                 continue
-            if pkg.kind == "official-v15":
+            if pkg.kind in kinds:
                 found.append(path)
     if len(found) == 1:
-        log.info("Found the official V15 (hash verified): %s", found[0])
+        log.info("Found official firmware (hash verified): %s", found[0])
         return str(found[0])
     if found:
-        log.info("Several official V15 files found (%s); give one explicitly",
+        log.info("Several verified official firmware files found (%s); give one explicitly",
                  ", ".join(map(str, found)))
     return None
 
@@ -1750,7 +1750,7 @@ def cmd_setup(args, input_fn=input):
     log.info("  sha256 %s", TRANSPORTER_UF2_SHA256)
     log.info("Step 4/4: pyserial")
     ensure_pyserial(args, input_fn)
-    log.info("Setup complete. Next: python3 fm1_transporter_recover.py wizard --v15 FM-1.fwsc")
+    log.info("Setup complete. Next: uv run fm1_transporter_recover.py wizard --firmware FM-1.fwsc")
     return EXIT_OK
 
 
@@ -1783,8 +1783,9 @@ FLASH_ADVICE = """\
   * Unplug the XIAO, hold its small B (BOOT) button, plug it in again, then let
     go: a disk called RPI-RP2 should appear on this computer.
   * Keep only one XIAO / Raspberry Pi Pico board plugged in.
-  * Linux: if the port cannot be opened, run `sudo usermod -aG dialout $USER`,
-    log out and back in."""
+  * Linux: if the port cannot be opened, check its group with `ls -l /dev/ttyACM*`.
+    On Arch run `sudo usermod -aG uucp $USER`; on Debian/Ubuntu run
+    `sudo usermod -aG dialout $USER`. Log out and back in, then restart the tool."""
 
 CONNECT_ADVICE = """\
   What to try:
@@ -1906,17 +1907,17 @@ class Wizard:
     # steps --------------------------------------------------------------------
 
     def get_v15(self):
-        path = v15_or_found(self.args.v15)
+        path = self.args.v15 or find_v15(kinds=("official-v15", "official-v16"))
         while True:
             if not path:
-                self.say("  The wizard needs the official V15 firmware file, FM-1.fwsc.\n"
+                self.say("  The wizard needs hash-verified official V15 or V16 firmware, FM-1.fwsc.\n"
                          "  Download it from %s (M-VAVE does not allow it to be\n"
                          "  shared, so it is not included here)." % V15_URL)
                 answer = self.ask("Path to FM-1.fwsc (you can drag the file into this window), "
                                   "q quits: ")
                 if answer is None:
-                    raise WizardQuit("no V15 file given; start the wizard again with "
-                                     "--v15 /path/to/FM-1.fwsc")
+                    raise WizardQuit("no firmware file given; start the wizard again with "
+                                     "--firmware /path/to/FM-1.fwsc")
                 if answer.strip().lower() in ("q", "quit", "exit"):
                     raise WizardQuit("stopped at your request")
                 path = clean_path(answer)
@@ -1930,20 +1931,20 @@ class Wizard:
                 log.error("  Give the path of FM-1.fwsc as downloaded from %s.", V15_URL)
                 path = None
                 continue
-            if pkg.kind != "official-v15":
-                log.error("  %s is %s, not the official V15.", pkg.path.name, pkg.description)
+            if pkg.kind not in ("official-v15", "official-v16"):
+                log.error("  %s is %s, not the official V15 or V16.", pkg.path.name, pkg.description)
                 log.error("  Download FM-1.fwsc again from %s and give its path.", V15_URL)
                 path = None
                 continue
             pkg.check_writable(False)
-            log.info("  Official V15 verified: firmware sha256 %s", pkg.firmware_sha256)
+            log.info("  Official %s verified: firmware sha256 %s", pkg.identity, pkg.firmware_sha256)
             return pkg
 
     def step0_checks(self):
         a = self.args
         self.step(0, "checks", "  Checking that setup was run, that the Transporter firmware file "
                                "is intact,\n  that pyserial is installed, and that you have the "
-                               "official V15 file.")
+                               "verified official V15 or V16 file.")
         uf2 = Path(a.uf2)
         if not uf2.is_file():
             msg = ("the Transporter firmware %s is missing. Run `python3 fm1_transporter_recover.py "
@@ -2043,7 +2044,7 @@ class Wizard:
 
     def step4_plan(self, path, data):
         self.step(4, "plan the repair (nothing is written)",
-                  "  Comparing the backup with V15 sector by sector, then checking that the "
+                  "  Comparing the backup with the selected firmware sector by sector, then checking that the "
                   "FM-1\n  still holds exactly what was backed up. Nothing is written in this "
                   "step.")
         plan = Plan(self.v15, data, path)
@@ -2052,9 +2053,9 @@ class Wizard:
         return plan
 
     def step5_write(self, plan):
-        self.step(5, "write V15 to the FM-1",
+        self.step(5, "write %s to the FM-1" % self.v15.identity,
                   "  This is the only step that changes the FM-1: %d sectors of 4 KiB of the\n"
-                  "  application area are rewritten with V15, then the whole flash is read\n"
+                  "  application area are rewritten with the selected firmware, then the whole flash is read\n"
                   "  back and compared. The first 16 KiB (the boot area) are never written.\n"
                   "  Do not switch anything off, do not unplug anything, keep the computer awake."
                   % len(plan.write))
@@ -2066,7 +2067,8 @@ class Wizard:
         return rc
 
     def step6_done(self):
-        self.step(6, "finish", FINAL_TEXT)
+        version = "V16" if self.v15.kind == "official-v16" else "V15"
+        self.step(6, "finish", FINAL_TEXT.replace("V15", version))
 
     def run(self):
         a = self.args
@@ -2167,7 +2169,8 @@ def build_parser():
     p.add_argument("--check", action="store_true",
                    help="only verify the four sha256s (placeholder, pattern, loader, result)")
     p = sp("wizard", "the whole recovery, step by step (run `setup` first)")
-    p.add_argument("--v15", help="the official FM-1.fwsc (V15); asked for if missing")
+    p.add_argument("--firmware", "--v15", dest="v15", metavar="FILE",
+                   help="verified official FM-1.fwsc (V15 or V16); asked for if missing")
     p.add_argument("--out", default="backups", help="dump folder (default: ./backups)")
     p.add_argument("--uf2", default=str(DEFAULT_UF2),
                    help="the Transporter firmware (default: %(default)s)")

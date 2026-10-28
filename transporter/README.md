@@ -5,7 +5,7 @@ firmware (MIT, Leo Kuroshita / Hügelton Instruments) for the **Seeed XIAO RP204
 `a632d923203170e3a08565f4056dbb3fd3d65ca5` (2026-10-01) with pico-sdk 2.2.0 and Arm GNU Toolchain 14.2.Rel1
 (`-DPICO_BOARD=seeed_xiao_rp2040`), **with a placeholder where JieLi's `wl82loader.bin` goes**. The Transporter
 embeds that 24064-byte loader at build time and its author does not redistribute it; neither does this repository.
-`python3 fm1_transporter_recover.py setup` fetches it from kagaimiq's jl-uboot-tool at the pinned commit (the same
+`uv run fm1_transporter_recover.py setup` fetches it from kagaimiq's jl-uboot-tool at the pinned commit (the same
 file `fm1_unbrick.py setup` uses), checks its sha256, and splices it into the placeholder to produce the firmware you
 flash, `transporter/fm1_transporter.uf2` (not committed).
 

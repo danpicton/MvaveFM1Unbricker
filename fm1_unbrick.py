@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import io
 import json
 import logging
@@ -107,6 +108,12 @@ DEVICE_MODEL = "WL82 UBOOT1.00"
 V15_IDENTITY = "FM-1_015"
 V15_FLASH_FW_SHA256 = "6edf3c37fb5bbbc33607c89375ee024d5477c17914d72221c8c68e58a8255686"
 V15_FILE_SHA256 = "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a"
+
+# Official V16 downloaded from M-VAVE's download page, 2026-10-27:
+# https://yms-file-store.oss-cn-hongkong.aliyuncs.com/software/firmware/FM-1.fwsc
+V16_IDENTITY = "FM-1_016"
+V16_FLASH_FW_SHA256 = "980ff51ae2d90004cf3887602ebd11cd31796977410eb77cc7faabad4023003c"
+V16_FILE_SHA256 = "d017fb65e70aca97ee29d944470c3515a74581df5c0576bf70de917c7b2b61d5"
 
 # .fwsc packaging: the first FWSC_MARKED_BLOCKS blocks of FWSC_BLOCK data
 # bytes are each followed by one marker byte. The markers spell the package
@@ -320,6 +327,11 @@ def classify(identity: str, fw_sha: str):
     if identity == V15_IDENTITY:
         return "damaged-v15", ("claims to be official V15 but the firmware hash does "
                                "NOT match: damaged or not genuine")
+    if identity == V16_IDENTITY:
+        if fw_sha == V16_FLASH_FW_SHA256:
+            return "official-v16", "official M-VAVE V16 (sha256 verified)"
+        return "damaged-v16", ("claims to be official V16 but the firmware hash does "
+                               "NOT match: damaged or not genuine")
     if not m:
         return "unknown", "unrecognised package identity %r" % identity
     num = m.group(1)
@@ -380,11 +392,13 @@ class Package:
         """Refuse packages that must not be written."""
         if self.firmware.count(0xFF) == len(self.firmware) or not any(self.firmware):
             raise SafetyError("the firmware region of %s is blank; refusing" % self.path.name)
-        if self.kind == "damaged-v15":
+        if self.kind in ("damaged-v15", "damaged-v16"):
+            version = "V15" if self.kind == "damaged-v15" else "V16"
+            expected = V15_FLASH_FW_SHA256 if version == "V15" else V16_FLASH_FW_SHA256
             raise SafetyError(
-                "%s says it is official V15 but its firmware hash is %s, not %s. "
+                "%s says it is official %s but its firmware hash is %s, not %s. "
                 "Download FM-1.fwsc again from M-VAVE; refusing to write it."
-                % (self.path.name, self.firmware_sha256, V15_FLASH_FW_SHA256))
+                % (self.path.name, version, self.firmware_sha256, expected))
         if self.kind == "unknown":
             if not i_know:
                 raise SafetyError("%s has no recognisable FM-1 identity (%r); refusing "
@@ -818,6 +832,9 @@ def cmd_setup(args):
     pip = [sys.executable, "-m", "pip", "install", "-r", str(req)]
     if args.no_pip:
         log.info("Skipping pip (--no-pip). Requirements: %s", req)
+    elif all(importlib.util.find_spec(name) is not None
+             for name in ("crcmod", "yaml", "Cryptodome", "tqdm")):
+        log.info("jl-uboot-tool's requirements are already installed")
     elif args.dry_run:
         log.info("DRY RUN: would run %s", " ".join(pip))
     else:
@@ -837,6 +854,8 @@ def install_rtmidi(args):
     pip = [sys.executable, "-m", "pip", "install", "python-rtmidi"]
     if args.no_pip:
         log.info("Skipping pip (--no-pip) for python-rtmidi too (only `softkey` needs it)")
+    elif importlib.util.find_spec("rtmidi") is not None:
+        log.info("python-rtmidi is already installed")
     elif args.dry_run:
         log.info("DRY RUN: would run %s", " ".join(pip))
     else:

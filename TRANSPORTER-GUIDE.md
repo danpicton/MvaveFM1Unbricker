@@ -15,12 +15,12 @@ dump showed, and `fm1_transporter_recover.py`, which automates it.
 ## The short version (no toolchain, no expert needed)
 
 1. Buy the two parts below; charge the FM-1 fully.
-2. Download `FM-1.fwsc` (the official V15) from <https://www.m-vave.com/download> and put it in
+2. Download `FM-1.fwsc` (the official V16, or the previously verified V15) from <https://www.m-vave.com/download> and put it in
    this folder. The script finds it by its hash, so you never type its path.
 3. In this folder:
    ```sh
-   python3 fm1_transporter_recover.py setup      # fetches the JieLi loader, builds the Transporter firmware file, installs pyserial
-   python3 fm1_transporter_recover.py wizard
+   uv run fm1_transporter_recover.py setup      # fetches the JieLi loader, builds the Transporter firmware file, installs pyserial
+   uv run fm1_transporter_recover.py wizard --firmware FM-1.fwsc
    ```
    The wizard tells you, step by step, when to plug in the XIAO, how to wire it
    ([picture](transporter/xiao-wiring.svg)), when to switch the FM-1 on, and asks you to type
@@ -34,8 +34,14 @@ dump showed, and `fm1_transporter_recover.py`, which automates it.
    moment it finds the Transporter, and the wizard asks for the FM-1 to be switched on only after
    that. If you use the separate commands instead, start the command first, then switch the
    FM-1 on.
-4. When it says done: switch the FM-1 off, remove the three wires, switch it on. It boots stock
-   V15. Install whatever firmware you want the normal way, on a full battery.
+4. When it says done: switch the FM-1 off, remove the three wires, switch it on. It boots the stock
+   firmware you selected. Install whatever firmware you want the normal way, on a full battery.
+
+The wizard verifies the V15 or V16 firmware hash before connecting to the FM-1.
+`--v15` remains an alias for `--firmware` in the wizard. In the manual commands
+below, `--verify-v15` specifically requires V15: omit it when restoring V16,
+and supply the V16 package path explicitly. `--v15` on analysis commands still
+means a V15 reference, so omit that reference when you only have V16.
 
 No part of this needs a compiler: the Transporter firmware ships prebuilt in `transporter/`
 with a placeholder where JieLi's loader goes, and `setup` splices the loader in from
@@ -80,7 +86,7 @@ simply not detected. The FM-1 runs on its battery during all of this: **charge i
 
 ## Build and flash the Transporter
 
-**You do not have to build it.** `python3 fm1_transporter_recover.py setup` produces
+**You do not have to build it.** `uv run fm1_transporter_recover.py setup` produces
 `transporter/fm1_transporter.uf2` from the prebuilt placeholder firmware in this repository and
 the loader it fetches from jl-uboot-tool (every hash checked; see `transporter/README.md`). Then
 `flash-xiao transporter/fm1_transporter.uf2`, or let the wizard do it. The rest of this section
@@ -115,7 +121,7 @@ onto it. If instead it shows up as a serial port (a fresh XIAO runs a blink sket
 either hold its BOOT button while plugging it in, or let the script do the "1200-baud touch":
 
 ```sh
-python3 fm1_transporter_recover.py flash-xiao /path/to/FM-1-transporter/build/fm1_transporter.uf2
+uv run fm1_transporter_recover.py flash-xiao /path/to/FM-1-transporter/build/fm1_transporter.uf2
 ```
 
 The board reboots as **FM-1 Transporter** (USB `2E8A:000A`) with two serial ports: the first is
@@ -125,7 +131,7 @@ the FM-1 has answered the USB_KEY: that is normal.
 
 ## The procedure
 
-Everything below needs pyserial (`pip3 install pyserial`) and, for `restore` / `recover`, the
+Everything below needs pyserial (installed automatically by `uv run`) and, for `restore` / `recover`, the
 `.fwsc` package you want on the unit. The official V15 `FM-1.fwsc` from M-VAVE is the one to write
 first (hash-checked, see README); a Felucca-family package such as ChoralRoot's is installed
 afterwards through its own installer, once the unit is alive.
@@ -139,16 +145,16 @@ afterwards through its own installer, once the unit is alive.
    the background, from the moment it finds the XIAO. That matters: if nothing reads the console,
    its output backs up and stalls the timing of the UBOOT handshake (the console then shows `ACK`,
    `PULSE: D+ released after N ms` and `HOST: no device mounted yet`). Everything the console
-   prints goes into the log file. The easiest route is `python3 fm1_transporter_recover.py wizard`:
+   prints goes into the log file. The easiest route is `uv run fm1_transporter_recover.py wizard`:
    it finds the XIAO before it asks you to switch the FM-1 on.
-2. `python3 fm1_transporter_recover.py info` waits for the data port and prints the chip:
+2. `uv run fm1_transporter_recover.py info` waits for the data port and prints the chip:
    `OK key=980F type=3 id=856014` is an FM-1. Not detected: swap D+/D-, shorten the wires, check
-   the charge, read the console port, try `python3 fm1_transporter_recover.py rekey` (the
+   the charge, read the console port, try `uv run fm1_transporter_recover.py rekey` (the
    Transporter reboots into USB_KEY mode) and switch the FM-1 off and on again.
-3. `python3 fm1_transporter_recover.py dump backups --v15 FM-1.fwsc` reads the whole 1 MiB twice,
+3. `uv run fm1_transporter_recover.py dump backups --v15 FM-1.fwsc` reads the whole 1 MiB twice,
    compares the two reads, saves the dump and prints the analysis (next section). **Keep the dump.**
    It holds the user data of the unit as well as the evidence of what went wrong.
-4. `python3 fm1_transporter_recover.py restore FM-1.fwsc --ref backups/<dump>.bin --verify-v15`
+4. `uv run fm1_transporter_recover.py restore FM-1.fwsc --ref backups/<dump>.bin --verify-v15`
    is a dry run: it re-reads the flash, checks that it still equals the dump, and lists the
    sectors it would write. Then the same with `--write`, type `WRITE` when asked. Every sector is
    erased, written and read back by the Transporter; a final full read is compared with the

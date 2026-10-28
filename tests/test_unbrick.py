@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for fm1_unbrick.py. No device needed.
 
-Run:  python3 -m pytest -q      or      python3 -m unittest -v
+Run:  uv run pytest -q      or      uv run python -m unittest -v
 
 Optional inputs (tests skip cleanly without them):
   FM1_ORACLE_FWSC   a real FM-1 .fwsc package (default: the ChoralRoot build next door)
@@ -166,9 +166,16 @@ class FwscTests(unittest.TestCase):
     def test_classification(self):
         self.assertEqual(fu.classify("FM-1_015", fu.V15_FLASH_FW_SHA256)[0], "official-v15")
         self.assertEqual(fu.classify("FM-1_015", "0" * 64)[0], "damaged-v15")
+        self.assertEqual(fu.classify("FM-1_016", fu.V16_FLASH_FW_SHA256)[0], "official-v16")
+        self.assertEqual(fu.classify("FM-1_016", "0" * 64)[0], "damaged-v16")
         self.assertEqual(fu.classify("FM-1_920", "0" * 64)[0], "felucca-family")
         self.assertEqual(fu.classify("FM-1_014", "0" * 64)[0], "official-other")
         self.assertEqual(fu.classify("garbage", "0" * 64)[0], "unknown")
+
+    def test_v16_with_unrecognised_hash_cannot_be_written(self):
+        pkg = fu.Package("v16.fwsc", make_fwsc("FM-1_016", make_ufw(random_image(16))))
+        with self.assertRaisesRegex(fu.SafetyError, "official V16"):
+            pkg.check_writable(False)
 
     @unittest.skipUnless(ORACLE_FWSC.is_file(), "oracle package not available")
     def test_real_package_layout(self):
@@ -840,6 +847,26 @@ class ProtocolTests(Workdir):
             self.skipTest("checkout has no commit information")
         self.assertEqual(commit, fu.JLUB_COMMIT)
         self.assertEqual(fu.verify_jlub(JLUB_DIR), fu.JLUB_COMMIT)
+
+
+class SetupDependenciesTest(unittest.TestCase):
+    def test_setup_reuses_dependencies_without_pip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = types.SimpleNamespace(jl_dir=tmp, source=None, dry_run=False,
+                                         no_pip=False)
+            with mock.patch.object(fu, "verify_jlub", return_value=fu.JLUB_COMMIT), \
+                    mock.patch.object(fu.importlib.util, "find_spec", return_value=object()), \
+                    mock.patch.object(fu.subprocess, "run") as run:
+                self.assertEqual(fu.cmd_setup(args), fu.EXIT_OK)
+            run.assert_not_called()
+
+    def test_missing_midi_dependency_still_installs_for_legacy_python(self):
+        args = types.SimpleNamespace(no_pip=False, dry_run=False)
+        with mock.patch.object(fu.importlib.util, "find_spec", return_value=None), \
+                mock.patch.object(fu.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            fu.install_rtmidi(args)
+        run.assert_called_once_with([sys.executable, "-m", "pip", "install", "python-rtmidi"])
 
 
 if __name__ == "__main__":

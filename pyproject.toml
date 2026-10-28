@@ -1,0 +1,20 @@
+[project]
+name = "mvave-fm1-unbricker"
+version = "1.2.0"
+description = "Recover an M-VAVE FM-1 over USB or the FM-1 Transporter"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "crcmod>=1.7",
+    "pyyaml>=6.0",
+    "pycryptodomex>=3.20",
+    "tqdm>=4.66",
+    "pyserial>=3.5",
+    "python-rtmidi>=1.5.8",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<9"]
+
+[tool.uv]
+package = false

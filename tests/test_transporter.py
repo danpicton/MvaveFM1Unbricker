@@ -704,6 +704,27 @@ class WizardTests(NoV15Search, Base):
         self.assertNotIn("Step 6 of 6", text)
         self.assertNotIn("Traceback", text)
 
+    def test_wizard_verified_v16_end_to_end(self):
+        path, image = self.pkg("v16.fwsc", 16, identity="FM-1_016")
+        digest = fu.Package.load(path).firmware_sha256
+        t, m = self.transporter(flash=self.before)
+        with mock.patch.object(fu, "V16_FLASH_FW_SHA256", digest):
+            rc, s = self.wizard(t, ["", "", "WRITE"], "--firmware", str(path))
+        self.assertEqual(rc, 0)
+        self.assertEqual(s.answers, [])
+        expected = self.before[:0x4000] + image[0x4000:0x93000] + self.before[0x93000:]
+        self.assertEqual(bytes(m.flash), expected)
+        self.assertIn("it boots stock V16", self.out.getvalue())
+
+    def test_wizard_rejects_unverified_v16_before_connecting(self):
+        path, _ = self.pkg("v16.fwsc", 16, identity="FM-1_016")
+        t, m = self.transporter(flash=self.before)
+        rc, _ = self.wizard(t, ["q"], "--firmware", str(path))
+        self.assertEqual(rc, 1)
+        self.assertEqual(m.reads, 0)
+        self.assertEqual(m.writes, [])
+        self.assertIn("not the official V15 or V16", self.out.getvalue())
+
     def test_wizard_no_keyboard_without_yes_stops(self):
         t, m = self.transporter(flash=self.before)
         rc, s = self.wizard(t, [], "--v15", str(self.path))
@@ -836,6 +857,15 @@ class ConsoleDrainTests(Base):
 
 
 class FindV15Tests(Base):
+
+    def test_wizard_search_finds_verified_v16_without_changing_v15_search(self):
+        path, _ = self.pkg("FM-1.fwsc", 16, identity="FM-1_016")
+        digest = fu.Package.load(path).firmware_sha256
+        with mock.patch.object(fu, "V16_FLASH_FW_SHA256", digest), \
+                mock.patch.object(tr, "v15_search_dirs", return_value=[Path.cwd()]):
+            self.assertIsNone(tr.find_v15())
+            found = tr.find_v15(kinds=("official-v15", "official-v16"))
+            self.assertEqual(Path(found).resolve(), Path(path).resolve())
 
     def test_single_genuine_v15_is_found(self):
         v15, _ = self.pkg("FM-1.fwsc", 3, identity="FM-1_015")

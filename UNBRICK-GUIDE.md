@@ -30,8 +30,8 @@ copy taken from a firmware package.
 - Windows (administrator PowerShell) or Linux (root);
 - Python 3.9+;
 - jl-uboot-tool: <https://github.com/kagaimiq/jl-uboot-tool> (Code > Download ZIP, or
-  `py fm1_unbrick.py setup`, which puts the tested commit `adb3f18` in `jl-uboot-tool/`), and its
-  requirements: `py -m pip install -r requirements.txt` inside its folder;
+  `uv run fm1_unbrick.py setup`, which puts the tested commit `adb3f18` in `jl-uboot-tool/`), and its
+  requirements (installed automatically by `uv run` from this project);
 - the official firmware package `FM-1.fwsc` from <https://www.m-vave.com/product?id=fm-1>.
 
 ## 1. Make the file to write
@@ -50,8 +50,8 @@ flash image is the package's flash.bin (found through the UFW entry list, at `0x
 
 
 ```sh
-py fm1_unbrick.py extract FM-1.fwsc app_v15.bin --verify-v15        # Windows
-python3 fm1_unbrick.py extract FM-1.fwsc app_v15.bin --verify-v15   # Linux
+uv run fm1_unbrick.py extract FM-1.fwsc app_v15.bin --verify-v15        # Windows
+uv run fm1_unbrick.py extract FM-1.fwsc app_v15.bin --verify-v15   # Linux
 ```
 
 (The original guide uses u/acrawf1's `fm1_extract_app.py FM-1.fwsc app_v15.bin`. Check that its
@@ -93,8 +93,8 @@ Below, replace `DEVICE` with your path.
 ## 3. Connect and check the chip
 
 ```sh
-py jluboottool.py --device '\\.\PhysicalDrive5'      # Windows
-sudo python3 jluboottool.py --device /dev/sg2        # Linux
+uv run --project .. python jluboottool.py --device '\\.\PhysicalDrive5'      # Windows
+sudo $(command -v uv) run --no-sync --project .. python jluboottool.py --device /dev/sg2        # Linux
 ```
 
 The tool uploads its loader and prints a Quick info block. It must show **Chip key: 0x980F**
@@ -122,7 +122,7 @@ The hashes must be equal; otherwise the connection is unreliable (try another ca
 and you must not write anything. Keep `backup.bin` safe: if you used Felucca or ChoralRoot, your
 on-device projects are in it.
 
-Optional, to see what is on the flash: `py fm1_unbrick.py extract` on a package and compare
+Optional, to see what is on the flash: `uv run fm1_unbrick.py extract` on a package and compare
 sectors, or run the script's `backup` command, which reports this for you.
 
 ## 5. Write the firmware region
